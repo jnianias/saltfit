@@ -9,8 +9,8 @@ and licensing information become available.
 ### Current status
 
 The current SALT repository is being used as a reference for the scientific
-model and fitting workflow. Its source code has not been copied into SALTFit
-and is not distributed by this private development repository.
+model and fitting workflow. Its source code, data, and documentation have not
+been copied into SALTFit and are not distributed by this repository.
 
 ### Upstream project
 
@@ -26,9 +26,10 @@ The current upstream repository does not appear to contain an explicit license.
 No permission to copy, modify, or redistribute its source code has been
 recorded for SALTFit.
 
-The planned approach is to wait for the author's new version, then record the
-license and the scope of any permission before incorporating or depending on
-the implementation.
+The planned approach is to develop and publish SALTFit as an independent
+package while waiting for the author's new version. SALTFit will not implement
+an upstream integration or distribute upstream material until the release,
+license, and scope of any permission have been recorded.
 
 When the release is available, record:
 
@@ -44,9 +45,11 @@ When the release is available, record:
 ### Planned integration
 
 SALTFit is intended to provide a high-level, object-oriented fitting API. The
-integration boundary should be kept narrow so that SALTFit can use the
-officially released SALT Python interface without modifying the underlying C
-implementation or its wrapper.
+integration boundary will be kept narrow through a model-evaluation backend
+contract. A future adapter may use an officially released SALT Python
+interface, or a permitted vendored implementation, without changing the
+public SALTFit API. The decision on the integration mechanism is deferred
+until the new release can be evaluated.
 
 Before public distribution, verify and document:
 
@@ -61,9 +64,11 @@ Before public distribution, verify and document:
 
 Until the licensing and release status are clear:
 
-- keep the SALTFit repository private,
-- do not copy the current SALT source into this repository,
-- do not publish wheels or source distributions containing SALT code,
+- SALTFit may be developed and published as a public, independent repository,
+- do not copy the current SALT source, data, or documentation into this
+  repository,
+- do not publish wheels or source distributions containing SALT material,
+- do not represent SALTFit as affiliated with or endorsed by the SALT authors,
 - use the upstream repository and documentation only as references,
 - record relevant correspondence and release information separately from
   source code when appropriate.
