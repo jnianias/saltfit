@@ -1,0 +1,49 @@
+name: CI
+
+permissions:
+  contents: read
+
+on: # Trigger on push or pull requests for any branch (can change this to branches: [ main ] if needed in future)
+  push:
+  pull_request:
+
+jobs:
+  checks:
+
+    runs-on: ubuntu-latest # add macOS and Windows runners if SALT backend is added in future
+
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.11", "3.12", "3.13", "3.14"]
+
+    steps:
+    - uses: actions/checkout@v7
+
+    - name: Set up Python ${{ matrix.python-version }}
+      uses: actions/setup-python@v7
+      with:
+        python-version: ${{ matrix.python-version }}
+
+    - name: Install uv
+      uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9 # v9.0.0
+
+    - name: Install dependencies
+      run: |
+        uv sync --locked --all-groups --python ${{ matrix.python-version }}
+
+    - name: Check formatting with Ruff
+      run: |
+        uv run ruff format --check .
+
+    - name: Lint with Ruff
+      run: |
+        uv run ruff check .
+
+    - name: Test with pytest
+      run: |
+        uv run pytest
+
+    - name: Build package
+      run: |
+        uv build

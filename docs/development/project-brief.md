@@ -1,10 +1,12 @@
 # SALTFit Project Brief
 
 ## What does SALTFit do?
+
 SALTFit provides a flexible, intuitive API for fitting SALT models to data using
  MCMC and visualising results.
 
 ## Project relationship to SALT
+
 SALTFit is an independent package. Until an upstream SALT release is available
 under terms that permit integration, this repository will contain only original
 SALTFit code and documentation. It will not include, redistribute, or modify the
@@ -17,6 +19,7 @@ vendored implementation can be integrated without changing the public SALTFit
 API.
 
 ## What input does SALTFit accept?
+
 At its core, SALTFit needs three arrays: (1) velocity, (2) flux, (3) errors.
 Users should be able to provide data directly as a tuple of arrays, or as a
 dictionary containing arrays, or as a table (astropy/pandas) or as a filepath
@@ -29,15 +32,18 @@ to be specified -- probably better to force the user to provide these rather
 than use an in-built dictionary of wavelengths.
 
 ## What can users fit?
+
 Any SALT model they like to either singlets or doublet lines. So emission,
 absorption, and P Cygni.
 
 ## What kind of fitting is used?
+
 SALTFit will use MCMC only -- deterministic optimisation will not be of much use
 except possibly during development. Even then it should only be added if the use
  case becomes clear.
 
 ## What will the front end look like?
+
 We want to use an object-oriented approach similar to sklearn. Users will
 initialise their model and then use a .fit_to() method to fit it to data. This
 is just a rough idea that may need refinement depending on what is available in
