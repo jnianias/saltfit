@@ -5,9 +5,10 @@ Monte Carlo (MCMC) methods.
 
 ## Project status
 
-SALTFit is at an early stage of development and should be considered unstable. The public API and SALT
-integration are not available yet. The current repository contains the
-project scaffold, development tooling, documentation, and initial tests.
+SALTFit is at an early stage of development and should be considered unstable.
+The public API and SALT integration are not available yet. The current
+repository contains the project scaffold, development tooling, documentation,
+and initial tests.
 
 ## Development
 
