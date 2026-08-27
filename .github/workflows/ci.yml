@@ -10,7 +10,7 @@ on: # Trigger on push or pull requests for any branch (can change this to branch
 jobs:
   checks:
 
-    runs-on: ubuntu-latest # add macOS and Windows runners if SALT backend is added in future
+    runs-on: ubuntu-latest
 
     strategy:
       fail-fast: false
