@@ -117,7 +117,7 @@ class Spectrum:
     @classmethod
     def from_file(
         cls,
-        path: str | PathLike,
+        path: str | PathLike[str],
         *,
         velocity_column: str,
         flux_column: str,

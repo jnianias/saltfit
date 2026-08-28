@@ -36,37 +36,36 @@ build-backend = "uv_build"
 
 [dependency-groups]
 dev = [
+    "pre-commit>=4.6.2",
     "pytest>=9.1.1",
     "ruff>=0.16.3",
 ]
-
-[tool.pydocstyle]
-add_ignore = ["D1", "D200", "D205", "D400", "D401"]
-convention = "numpy"
 
 [tool.ruff]
 line-length = 120
 preview = true
 
 [tool.ruff.lint]
+select = [
+  "F",
+  "E",
+  "W",
+  "I",
+  "D",
+]
 ignore = [
-  "D1",  # pydocstyle: Missing Docstrings
-  "D107",  # pydocstyle: numpy convention
+  "D107",  # Dataclass constructor is documented by the class docstring.
   "D203",
-  "D205",
-  "D212",
   "D213",
   "D401",
-  "D402",
   "D413",
   "D415",
   "D416",
-  "D417"
+  "D417",
 ]
-select = [
-  "F",  # pyflakes
-  "E",  # pycodestyle
-  "W",  # pycodestyle warnings
-  "I",  # isort
-  "D"  # pydocstyle
-]
+
+[tool.ruff.lint.pydocstyle]
+convention = "numpy"
+
+[tool.ruff.lint.per-file-ignores]
+"tests/**/*.py" = ["D"]
