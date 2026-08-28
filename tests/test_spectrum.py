@@ -41,3 +41,43 @@ def test_masked_returns_selected_samples():
 
     np.testing.assert_array_equal(masked.velocity, [-100.0, 100.0])
     np.testing.assert_array_equal(masked.flux, [1.0, 1.1])
+
+
+def test_spectrum_loads_an_ascii_table(tmp_path):
+    pytest.importorskip("astropy.table")
+    path = tmp_path / "spectrum.txt"
+    path.write_text("velocity flux uncertainty\n-100.0 1.0 0.1\n0.0 0.8 0.2\n100.0 1.1 0.1\n")
+
+    spectrum = Spectrum.from_file(
+        path,
+        velocity_column="velocity",
+        flux_column="flux",
+        uncertainty_column="uncertainty",
+        format="ascii.basic",
+    )
+
+    np.testing.assert_allclose(spectrum.velocity, [-100.0, 0.0, 100.0])
+    np.testing.assert_allclose(spectrum.flux, [1.0, 0.8, 1.1])
+
+
+def test_spectrum_loads_a_fits_table(tmp_path):
+    astropy_table = pytest.importorskip("astropy.table")
+    table = astropy_table.Table({
+        "velocity": [-100.0, 0.0, 100.0],
+        "flux": [1.0, 0.8, 1.1],
+        "uncertainty": [0.1, 0.2, 0.1],
+    })
+
+    path = tmp_path / "spectrum.fits"
+    table.write(path, format="fits")
+
+    spectrum = Spectrum.from_file(
+        path,
+        velocity_column="velocity",
+        flux_column="flux",
+        uncertainty_column="uncertainty",
+    )
+
+    np.testing.assert_allclose(spectrum.velocity, [-100.0, 0.0, 100.0])
+    np.testing.assert_allclose(spectrum.flux, [1.0, 0.8, 1.1])
+    np.testing.assert_allclose(spectrum.uncertainty, [0.1, 0.2, 0.1])

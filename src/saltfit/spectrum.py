@@ -3,6 +3,11 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from os import PathLike
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from astropy.table import Table
 
 import numpy as np
 from numpy.typing import ArrayLike, NDArray
@@ -74,4 +79,94 @@ class Spectrum:
             velocity=self.velocity[mask_array],
             flux=self.flux[mask_array],
             uncertainty=self.uncertainty[mask_array],
+        )
+
+    @classmethod
+    def from_table(
+        cls,
+        table: Table,
+        *,
+        velocity_column: str,
+        flux_column: str,
+        uncertainty_column: str,
+    ) -> "Spectrum":
+        """Create a spectrum from columns in an Astropy table.
+
+        Parameters
+        ----------
+        table
+            Astropy table containing the observed spectrum.
+        velocity_column
+            Name of the velocity column, expressed in km/s.
+        flux_column
+            Name of the observed flux column.
+        uncertainty_column
+            Name of the one-sigma flux-uncertainty column.
+
+        Returns
+        -------
+        Spectrum
+            Validated spectrum constructed from the selected table columns.
+        """
+        return cls(
+            velocity=table[velocity_column].data,
+            flux=table[flux_column].data,
+            uncertainty=table[uncertainty_column].data,
+        )
+
+    @classmethod
+    def from_file(
+        cls,
+        path: str | PathLike,
+        *,
+        velocity_column: str,
+        flux_column: str,
+        uncertainty_column: str,
+        format: str | None = None,
+    ) -> "Spectrum":
+        """Read a spectrum from a FITS or ASCII table file.
+
+        Parameters
+        ----------
+        path
+            Path to a table readable by Astropy, including FITS and ASCII
+            formats.
+        velocity_column
+            Name of the velocity column, expressed in km/s.
+        flux_column
+            Name of the observed flux column.
+        uncertainty_column
+            Name of the one-sigma flux-uncertainty column.
+        format
+            Optional Astropy table format name, such as ``"ascii.basic"``.
+            Omit to let Astropy infer the format from the file contents or
+            extension.
+
+        Returns
+        -------
+        Spectrum
+            Validated spectrum constructed from the selected file columns.
+
+        Raises
+        ------
+        ImportError
+            If Astropy support is not installed.
+        """
+        try:
+            from astropy.table import Table
+        except ImportError as error:
+            raise ImportError(
+                "Reading spectra from FITS and table files requires Astropy, which is "
+                "not installed in this environment.\n\n"
+                "Install it with one of these commands:\n"
+                "  uv pip install 'saltfit[astropy]'\n"
+                "  python -m pip install 'saltfit[astropy]'\n\n"
+            ) from error
+
+        table = Table.read(path, format=format)
+        return cls.from_table(
+            table,
+            velocity_column=velocity_column,
+            flux_column=flux_column,
+            uncertainty_column=uncertainty_column,
         )
