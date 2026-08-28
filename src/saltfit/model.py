@@ -44,13 +44,14 @@ class SALTModel:
         ``"emission"``, or ``"pcygni"``.
     profile_parameters
         Fixed atomic-transition configuration for the SALT implementation.
-        The current inflow evaluator requires ``abs_waves``,
+        The current evaluator requires ``abs_waves``,
         ``abs_osc_strs``, ``em_waves``, ``em_osc_strs``, ``res``, ``fluor``,
         ``p_r``, ``p_f``, ``final_waves``, and ``line_num``. ``APERTURE`` and
         ``OCCULTATION`` are optional Boolean controls.
     initial_values
         Initial values for the parameters sampled by MCMC, supplied as a
-        mapping from parameter name to value. Inflow models require exactly
+        mapping from parameter name to value. The current implementation
+        requires exactly
         ``alpha``, ``psi``, ``gamma``, ``tau``, ``v_0``, ``v_w``, ``v_ap``,
         ``f_c``, ``k``, and ``delta``. ``alpha`` and ``psi`` are angles in
         radians; ``v_0``, ``v_w``, and ``v_ap`` are velocities in km/s; the
@@ -257,9 +258,9 @@ class SALTModel:
     def _validate_parameter_configuration(self) -> None:
         expected_names = set(_INFLOW_PARAMETER_NAMES)
         if set(self.initial_values) != expected_names:
-            raise ValueError("initial_values must contain exactly the required SALT inflow parameter names.")
+            raise ValueError("initial_values must contain exactly the required SALT parameter names.")
         if set(self.bounds) != expected_names:
-            raise ValueError("bounds must contain exactly the required SALT inflow parameter names.")
+            raise ValueError("bounds must contain exactly the required SALT parameter names.")
 
         for name in _INFLOW_PARAMETER_NAMES:
             try:

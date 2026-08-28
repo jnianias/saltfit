@@ -15,7 +15,7 @@ from numpy.typing import NDArray
 
 
 class SALTConfigurationError(RuntimeError):
-    """Raised when a local SALT inflow installation cannot be used."""
+    """Raised when a local SALT installation cannot be used."""
 
 
 _FLOW_PARAMETER_NAMES = frozenset({"alpha", "psi", "gamma", "tau", "v_0", "v_w", "v_ap", "f_c", "k", "delta"})
@@ -24,7 +24,7 @@ _LIBRARY_NAMES = {"Darwin": "libsalt_inflows.dylib", "Linux": "libsalt_inflows.s
 
 @dataclass(frozen=True, slots=True)
 class _SALTInflowEvaluator:
-    """Evaluate a locally built SALT inflow model through its Python wrapper.
+    """Evaluate the current local SALT implementation through its Python wrapper.
 
     This is an implementation detail of :class:`saltfit.SALTModel`.
     """
@@ -101,7 +101,9 @@ def _library_name_for_current_platform() -> str:
     try:
         return _LIBRARY_NAMES[system()]
     except KeyError as error:
-        raise SALTConfigurationError(f"SALT inflow is supported only on macOS and Linux, not {system()!r}.") from error
+        raise SALTConfigurationError(
+            f"The local SALT implementation supports only macOS and Linux, not {system()!r}."
+        ) from error
 
 
 def _load_wrapper(wrapper_path: Path) -> ModuleType:
