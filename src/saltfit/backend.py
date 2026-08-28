@@ -26,7 +26,7 @@ _LIBRARY_NAMES = {"Darwin": "libsalt_inflows.dylib", "Linux": "libsalt_inflows.s
 class _SALTInflowEvaluator:
     """Evaluate a locally built SALT inflow model through its Python wrapper.
 
-    This is an implementation detail of :class:`saltfit.SALTInflowModel`.
+    This is an implementation detail of :class:`saltfit.SALTModel`.
     """
 
     lam_ref: float

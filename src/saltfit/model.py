@@ -5,56 +5,104 @@ from __future__ import annotations
 from dataclasses import dataclass
 from dataclasses import field as dataclass_field
 from math import inf
-from typing import Mapping, Sequence
+from typing import Literal, Mapping
 
 import emcee
 import numpy as np
 from numpy.typing import ArrayLike, NDArray
 
 from saltfit.backend import _SALTInflowEvaluator
-from saltfit.parameters import Parameter
+from saltfit.parameters import Parameter, UniformPrior
 from saltfit.result import FitResult
 from saltfit.spectrum import Spectrum
 
+_INFLOW_PARAMETER_NAMES = (
+    "alpha",
+    "psi",
+    "gamma",
+    "tau",
+    "v_0",
+    "v_w",
+    "v_ap",
+    "f_c",
+    "k",
+    "delta",
+)
+
 
 @dataclass(frozen=True, slots=True)
-class SALTInflowModel:
-    """A SALT inflow line-profile model that can be fit to an observed spectrum.
+class SALTModel:
+    """Fit a SALT line profile to a continuum-normalized observed spectrum.
 
     Parameters
     ----------
     lam_ref
-        Rest wavelength of the reference transition.
+        Rest wavelength of the reference transition. Use the same wavelength
+        unit as the atomic wavelengths in ``profile_parameters``.
     profile_type
-        SALT profile type: ``"absorption"``, ``"emission"``, or ``"pcygni"``.
+        Component of the line profile to evaluate: ``"absorption"``,
+        ``"emission"``, or ``"pcygni"``.
     profile_parameters
-        Fixed atomic and profile configuration accepted by the SALT wrapper.
-    parameters
-        Flow parameters to sample and their priors.
+        Fixed atomic-transition configuration for the SALT implementation.
+        The current inflow evaluator requires ``abs_waves``,
+        ``abs_osc_strs``, ``em_waves``, ``em_osc_strs``, ``res``, ``fluor``,
+        ``p_r``, ``p_f``, ``final_waves``, and ``line_num``. ``APERTURE`` and
+        ``OCCULTATION`` are optional Boolean controls.
+    initial_values
+        Initial values for the parameters sampled by MCMC, supplied as a
+        mapping from parameter name to value. Inflow models require exactly
+        ``alpha``, ``psi``, ``gamma``, ``tau``, ``v_0``, ``v_w``, ``v_ap``,
+        ``f_c``, ``k``, and ``delta``. ``alpha`` and ``psi`` are angles in
+        radians; ``v_0``, ``v_w``, and ``v_ap`` are velocities in km/s; the
+        other parameters are dimensionless.
+    bounds
+        Uniform prior bounds for each sampled parameter, as a mapping from
+        parameter name to a ``(lower, upper)`` pair. Each initial value must
+        lie within its corresponding bounds.
+    flow
+        Direction of the modeled gas flow. Only ``"inflow"`` is currently
+        implemented.
     salt_path
         Optional local SALT project root. When omitted, SALTFit uses the
         ``SALTFIT_SALT_PATH`` environment variable.
     background
-        Constant normalized background flux supplied to the SALT model.
+        Constant continuum-normalized background flux supplied to the SALT
+        model. The default of one is appropriate for ``Spectrum`` objects.
+
+    Notes
+    -----
+    When ``APERTURE`` is enabled, the current SALT evaluator requires
+    ``abs(v_ap) < abs(v_w)``. SALTFit assigns parameter combinations that
+    violate this constraint a log prior of negative infinity.
     """
 
     lam_ref: float
     profile_type: str
     profile_parameters: Mapping[str, object]
-    parameters: Sequence[Parameter]
+    initial_values: Mapping[str, float]
+    bounds: Mapping[str, tuple[float, float]]
+    flow: Literal["inflow"] = "inflow"
     salt_path: str | None = None
     background: float = 1.0
+    _parameters: tuple[Parameter, ...] = dataclass_field(init=False, repr=False, compare=False)
     _evaluator: _SALTInflowEvaluator = dataclass_field(init=False, repr=False, compare=False)
 
     def __post_init__(self) -> None:
         """Validate the model parameter definition."""
-        parameters = tuple(self.parameters)
-        if not parameters:
-            raise ValueError("parameters must contain at least one Parameter.")
-        names = [parameter.name for parameter in parameters]
-        if len(set(names)) != len(names):
-            raise ValueError("parameter names must be unique.")
-        object.__setattr__(self, "parameters", parameters)
+        if self.flow != "inflow":
+            raise ValueError("Only flow='inflow' is currently supported.")
+        self._validate_parameter_configuration()
+        parameters = tuple(
+            Parameter(name, float(self.initial_values[name]), UniformPrior(*self.bounds[name]))
+            for name in _INFLOW_PARAMETER_NAMES
+        )
+        object.__setattr__(
+            self, "initial_values", {parameter.name: parameter.initial_value for parameter in parameters}
+        )
+        object.__setattr__(
+            self, "bounds", {name: tuple(map(float, self.bounds[name])) for name in _INFLOW_PARAMETER_NAMES}
+        )
+        object.__setattr__(self, "_parameters", parameters)
         object.__setattr__(
             self,
             "_evaluator",
@@ -70,12 +118,12 @@ class SALTInflowModel:
     @property
     def parameter_names(self) -> tuple[str, ...]:
         """Names of the free model parameters in sampler order."""
-        return tuple(parameter.name for parameter in self.parameters)
+        return _INFLOW_PARAMETER_NAMES
 
     @property
     def initial_parameters(self) -> dict[str, float]:
         """Initial values keyed by parameter name."""
-        return {parameter.name: parameter.initial_value for parameter in self.parameters}
+        return dict(self.initial_values)
 
     def predict(self, velocity: ArrayLike, parameters: Mapping[str, float]) -> NDArray[np.float64]:
         """Evaluate model flux at each supplied velocity sample."""
@@ -100,7 +148,10 @@ class SALTInflowModel:
         except ValueError:
             return -inf
 
-        log_prior = sum(parameter.prior.logpdf(float(parameters[parameter.name])) for parameter in self.parameters)
+        if self.profile_parameters.get("APERTURE", True) and abs(parameters["v_ap"]) >= abs(parameters["v_w"]):
+            return -inf
+
+        log_prior = sum(parameter.prior.logpdf(float(parameters[parameter.name])) for parameter in self._parameters)
         return float(log_prior) if np.isfinite(log_prior) else -inf
 
     def log_likelihood(self, spectrum: Spectrum, parameters: Mapping[str, float]) -> float:
@@ -154,7 +205,7 @@ class SALTInflowModel:
         if initial_spread <= 0:
             raise ValueError("initial_spread must be positive.")
 
-        n_dimensions = len(self.parameters)
+        n_dimensions = len(self._parameters)
         n_walkers = n_walkers if n_walkers is not None else 2 * n_dimensions + 2
         if n_walkers < 2 * n_dimensions:
             raise ValueError("n_walkers must be at least twice the parameter count.")
@@ -180,9 +231,9 @@ class SALTInflowModel:
         initial_spread: float,
         random_generator: np.random.Generator,
     ) -> NDArray[np.float64]:
-        initial_values = np.array([parameter.initial_value for parameter in self.parameters])
+        initial_values = np.array([parameter.initial_value for parameter in self._parameters])
         scales = initial_spread * np.maximum(np.abs(initial_values), 1.0)
-        positions = np.empty((n_walkers, len(self.parameters)))
+        positions = np.empty((n_walkers, len(self._parameters)))
 
         for walker_index in range(n_walkers):
             for _ in range(1_000):
@@ -202,3 +253,25 @@ class SALTInflowModel:
             raise ValueError("parameters must contain exactly the model parameter names.")
         if not all(np.isfinite(float(value)) for value in parameters.values()):
             raise ValueError("parameter values must be finite.")
+
+    def _validate_parameter_configuration(self) -> None:
+        expected_names = set(_INFLOW_PARAMETER_NAMES)
+        if set(self.initial_values) != expected_names:
+            raise ValueError("initial_values must contain exactly the required SALT inflow parameter names.")
+        if set(self.bounds) != expected_names:
+            raise ValueError("bounds must contain exactly the required SALT inflow parameter names.")
+
+        for name in _INFLOW_PARAMETER_NAMES:
+            try:
+                lower, upper = self.bounds[name]
+                initial_value = float(self.initial_values[name])
+                lower = float(lower)
+                upper = float(upper)
+            except (TypeError, ValueError) as error:
+                raise ValueError(f"bounds[{name!r}] must be a pair of finite numbers.") from error
+            if not np.isfinite((initial_value, lower, upper)).all():
+                raise ValueError(f"initial_values[{name!r}] and bounds[{name!r}] must be finite.")
+            if lower >= upper:
+                raise ValueError(f"bounds[{name!r}] must have lower < upper.")
+            if not lower <= initial_value <= upper:
+                raise ValueError(f"initial_values[{name!r}] must lie within bounds[{name!r}].")

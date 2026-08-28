@@ -15,16 +15,21 @@ from numpy.typing import ArrayLike, NDArray
 
 @dataclass(frozen=True, slots=True)
 class Spectrum:
-    """One-dimensional observed spectrum sampled on a velocity axis.
+    """One-dimensional continuum-normalized spectrum sampled on a velocity axis.
+
+    SALT models describe flux relative to a continuum of one. Model the
+    continuum independently, then divide both the observed flux and its
+    one-sigma uncertainty by that continuum before constructing a ``Spectrum``.
 
     Parameters
     ----------
     velocity
         Observed velocity samples in km/s.
     flux
-        Flux measured at each velocity sample.
+        Continuum-normalized flux measured at each velocity sample.
     uncertainty
-        One-sigma flux uncertainties at each velocity sample.
+        One-sigma continuum-normalized flux uncertainties at each velocity
+        sample.
     """
 
     velocity: ArrayLike
@@ -99,9 +104,10 @@ class Spectrum:
         velocity_column
             Name of the velocity column, expressed in km/s.
         flux_column
-            Name of the observed flux column.
+            Name of the continuum-normalized flux column.
         uncertainty_column
-            Name of the one-sigma flux-uncertainty column.
+            Name of the one-sigma continuum-normalized flux-uncertainty
+            column.
 
         Returns
         -------
@@ -134,9 +140,10 @@ class Spectrum:
         velocity_column
             Name of the velocity column, expressed in km/s.
         flux_column
-            Name of the observed flux column.
+            Name of the continuum-normalized flux column.
         uncertainty_column
-            Name of the one-sigma flux-uncertainty column.
+            Name of the one-sigma continuum-normalized flux-uncertainty
+            column.
         format
             Optional Astropy table format name, such as ``"ascii.basic"``.
             Omit to let Astropy infer the format from the file contents or

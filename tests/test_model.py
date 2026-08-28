@@ -4,7 +4,7 @@ from pathlib import Path
 import numpy as np
 import pytest
 
-from saltfit import Parameter, SALTConfigurationError, SALTInflowModel, Spectrum, UniformPrior
+from saltfit import SALTConfigurationError, SALTModel, Spectrum
 
 
 def _make_salt_installation(root: Path) -> Path:
@@ -20,29 +20,45 @@ def _profile_parameters() -> dict[str, object]:
     return {"abs_waves": [2382.04]}
 
 
-def _parameters() -> tuple[Parameter, ...]:
-    return (
-        Parameter("alpha", 1.0, UniformPrior(0.0, 3.0)),
-        Parameter("psi", 0.0, UniformPrior(-1.0, 1.0)),
-        Parameter("gamma", 1.0, UniformPrior(0.0, 3.0)),
-        Parameter("tau", 0.2, UniformPrior(0.0, 1.0)),
-        Parameter("v_0", 25.0, UniformPrior(0.0, 100.0)),
-        Parameter("v_w", 500.0, UniformPrior(100.0, 1_000.0)),
-        Parameter("v_ap", 50.0, UniformPrior(0.0, 100.0)),
-        Parameter("f_c", 1.0, UniformPrior(0.0, 1.0)),
-        Parameter("k", 0.0, UniformPrior(-1.0, 1.0)),
-        Parameter("delta", 1.5, UniformPrior(0.0, 3.0)),
-    )
+def _initial_values() -> dict[str, float]:
+    return {
+        "alpha": 1.0,
+        "psi": 0.0,
+        "gamma": 1.0,
+        "tau": 0.2,
+        "v_0": 25.0,
+        "v_w": 500.0,
+        "v_ap": 50.0,
+        "f_c": 1.0,
+        "k": 0.0,
+        "delta": 1.5,
+    }
+
+
+def _bounds() -> dict[str, tuple[float, float]]:
+    return {
+        "alpha": (0.0, 3.0),
+        "psi": (-1.0, 1.0),
+        "gamma": (0.0, 3.0),
+        "tau": (0.0, 1.0),
+        "v_0": (0.0, 100.0),
+        "v_w": (100.0, 1_000.0),
+        "v_ap": (0.0, 100.0),
+        "f_c": (0.0, 1.0),
+        "k": (-1.0, 1.0),
+        "delta": (0.0, 3.0),
+    }
 
 
 @pytest.fixture
-def model(tmp_path) -> SALTInflowModel:
-    return SALTInflowModel(
+def model(tmp_path) -> SALTModel:
+    return SALTModel(
         salt_path=str(_make_salt_installation(tmp_path / "salt")),
         lam_ref=2382.04,
         profile_type="pcygni",
         profile_parameters=_profile_parameters(),
-        parameters=_parameters(),
+        initial_values=_initial_values(),
+        bounds=_bounds(),
     )
 
 
@@ -53,7 +69,7 @@ def spectrum() -> Spectrum:
 
 def test_model_loads_local_salt_and_predicts(model):
     np.testing.assert_allclose(model.predict([-1.0, 0.0, 1.0], model.initial_parameters), [1.2, 1.2, 1.2])
-    assert model.parameter_names == tuple(parameter.name for parameter in _parameters())
+    assert model.parameter_names == tuple(_initial_values())
 
 
 def test_model_calculates_normalized_log_probability(model, spectrum):
@@ -74,9 +90,45 @@ def test_model_reports_missing_salt_configuration(monkeypatch):
     monkeypatch.delenv("SALTFIT_SALT_PATH", raising=False)
 
     with pytest.raises(SALTConfigurationError, match="SALTFIT_SALT_PATH"):
-        SALTInflowModel(
+        SALTModel(
             lam_ref=2382.04,
             profile_type="emission",
             profile_parameters=_profile_parameters(),
-            parameters=_parameters(),
+            initial_values=_initial_values(),
+            bounds=_bounds(),
         )
+
+
+def test_model_rejects_unsupported_flow(tmp_path):
+    with pytest.raises(ValueError, match="Only flow='inflow'"):
+        SALTModel(
+            salt_path=str(_make_salt_installation(tmp_path / "salt")),
+            lam_ref=2382.04,
+            profile_type="emission",
+            profile_parameters=_profile_parameters(),
+            initial_values=_initial_values(),
+            bounds=_bounds(),
+            flow="outflow",  # type: ignore[arg-type]
+        )
+
+
+def test_model_rejects_incomplete_parameter_configuration(tmp_path):
+    initial_values = _initial_values()
+    initial_values.pop("tau")
+
+    with pytest.raises(ValueError, match="initial_values must contain exactly"):
+        SALTModel(
+            salt_path=str(_make_salt_installation(tmp_path / "salt")),
+            lam_ref=2382.04,
+            profile_type="emission",
+            profile_parameters=_profile_parameters(),
+            initial_values=initial_values,
+            bounds=_bounds(),
+        )
+
+
+def test_model_rejects_invalid_aperture_velocity(model, spectrum):
+    parameters = model.initial_parameters
+    parameters["v_ap"] = parameters["v_w"]
+
+    assert model.log_probability(spectrum, parameters) == -math.inf
