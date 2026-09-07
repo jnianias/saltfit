@@ -10,6 +10,21 @@ The public API and SALT integration are available but still evolving. The
 repository contains the package implementation, development tooling,
 documentation, and tests.
 
+## Installation
+
+SALTFit is currently installed directly from its Git repository. Install it
+with pip:
+
+```bash
+python3 -m pip install "saltfit @ git+https://github.com/jnianias/saltfit.git@v0.1.0a1"
+```
+
+Or add it to a project managed by [uv](https://docs.astral.sh/uv/):
+
+```bash
+uv add "saltfit @ git+https://github.com/jnianias/saltfit.git@v0.1.0a1"
+```
+
 ## Fit a SALT model
 
 SALTFit uses a separately installed and built checkout of the official
@@ -158,7 +173,7 @@ Run the checks used by continuous integration:
 ```bash
 uv run ruff format --check .
 uv run ruff check .
-uv run pytest -m "not integration"
+uv run pytest
 uv build
 ```
 
