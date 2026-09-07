@@ -9,15 +9,28 @@ from saltfit import SALTConfigurationError, SALTModel, Spectrum
 
 def _make_salt_installation(root: Path) -> Path:
     (root / "python").mkdir(parents=True)
-    (root / "libsalt_inflows.so").touch()
+    (root / "libsalt.so").touch()
     (root / "python" / "run_salt.py").write_text(
-        "def Line_Profile(**kwargs):\n    return kwargs['background'] + kwargs['flow_parameters']['tau']\n"
+        "LAST_KWARGS = None\n"
+        "def salt(**kwargs):\n"
+        "    global LAST_KWARGS\n"
+        "    LAST_KWARGS = kwargs\n"
+        "    if kwargs['profile_parameters']['miscellaneous_parameters'].get('return_nan'):\n"
+        "        return kwargs['background'] * float('nan')\n"
+        "    if kwargs['model_type'] == 'outflow':\n"
+        "        return kwargs['background'] + kwargs['flow_parameters']['v_b']\n"
+        "    return kwargs['background'] + kwargs['flow_parameters']['tau']\n"
     )
     return root
 
 
 def _profile_parameters() -> dict[str, object]:
-    return {"abs_waves": [2382.04]}
+    return {
+        "absorption_parameters": {"abs_waves": [2382.04], "abs_osc_strs": [0.32]},
+        "emission_parameters": {"em_waves": [2382.04], "emitted_waves": [2382.04], "em_osc_strs": [0.32]},
+        "observing_parameters": {"v_ap": 50.0, "APERTURE": True},
+        "miscellaneous_parameters": {"OCCULTATION": True},
+    }
 
 
 def _initial_values() -> dict[str, float]:
@@ -28,7 +41,6 @@ def _initial_values() -> dict[str, float]:
         "tau": 0.2,
         "v_0": 25.0,
         "v_w": 500.0,
-        "v_ap": 50.0,
         "f_c": 1.0,
         "k": 0.0,
         "delta": 1.5,
@@ -43,7 +55,6 @@ def _bounds() -> dict[str, tuple[float, float]]:
         "tau": (0.0, 1.0),
         "v_0": (0.0, 100.0),
         "v_w": (100.0, 1_000.0),
-        "v_ap": (0.0, 100.0),
         "f_c": (0.0, 1.0),
         "k": (-1.0, 1.0),
         "delta": (0.0, 3.0),
@@ -59,6 +70,7 @@ def model(tmp_path) -> SALTModel:
         profile_parameters=_profile_parameters(),
         initial_values=_initial_values(),
         bounds=_bounds(),
+        flow="inflow",
     )
 
 
@@ -67,23 +79,59 @@ def spectrum() -> Spectrum:
     return Spectrum(velocity=[-1.0, 0.0, 1.0], flux=[1.2, 1.2, 1.2], uncertainty=[0.1, 0.1, 0.1])
 
 
-def test_model_loads_local_salt_and_predicts(model):
-    np.testing.assert_allclose(model.predict([-1.0, 0.0, 1.0], model.initial_parameters), [1.2, 1.2, 1.2])
+def test_model_loads_local_salt_and_computes_spectrum(model):
+    np.testing.assert_allclose(model.compute_spectrum([-1.0, 0.0, 1.0], model.initial_parameters), [1.2, 1.2, 1.2])
     assert model.parameter_names == tuple(_initial_values())
 
 
-def test_model_calculates_normalized_log_probability(model, spectrum):
-    expected = -3.0 * math.log(0.1 * math.sqrt(2.0 * math.pi))
+def test_model_omits_legacy_dynamic_inputs_from_wrapper_configuration(model):
+    construction_velocity = np.linspace(-1_000.0, 5_500.0, 1_000)
+    profile_parameters = _profile_parameters()
+    profile_parameters["observing_parameters"]["v_obs"] = construction_velocity
+    profile_parameters["miscellaneous_parameters"]["lam_ref"] = 2382.04
+    model = SALTModel(
+        salt_path=str(model.salt_path),
+        lam_ref=model.lam_ref,
+        profile_type=model.profile_type,
+        profile_parameters=profile_parameters,
+        initial_values=model.initial_parameters,
+        bounds=model.bounds,
+        flow=model.flow,
+    )
+    evaluation_velocity = np.array([-500.0, 0.0, 300.0])
 
-    assert model.log_probability(spectrum, model.initial_parameters) == pytest.approx(expected)
+    model.compute_spectrum(evaluation_velocity, model.initial_parameters)
+
+    wrapper_kwargs = model._evaluator._salt.__globals__["LAST_KWARGS"]
+    forwarded_profile = wrapper_kwargs["profile_parameters"]
+    np.testing.assert_array_equal(wrapper_kwargs["v_obs"], evaluation_velocity)
+    assert "v_obs" not in forwarded_profile["observing_parameters"]
+    assert "lam_ref" not in forwarded_profile["miscellaneous_parameters"]
+    np.testing.assert_array_equal(profile_parameters["observing_parameters"]["v_obs"], construction_velocity)
+    assert profile_parameters["miscellaneous_parameters"]["lam_ref"] == model.lam_ref
+
+
+def test_model_calculates_normalized_log_probability(model, spectrum):
+    log_likelihood = -3.0 * math.log(0.1 * math.sqrt(2.0 * math.pi))
+    log_prior = sum(-math.log(upper - lower) for lower, upper in model.bounds.values())
+
+    assert model.log_probability(spectrum, model.initial_parameters) == pytest.approx(log_likelihood + log_prior)
 
 
 def test_model_fits_spectrum_with_mcmc(model, spectrum):
-    result = model.fit_to(spectrum, n_steps=3, n_walkers=20, random_seed=42)
+    result = model.fit_to(spectrum, n_steps=3, n_walkers=18, random_seed=42)
 
-    assert result.chain.shape == (3, 20, 10)
-    assert result.log_probability.shape == (3, 20)
+    assert result.chain.shape == (3, 18, 9)
+    assert result.log_probability.shape == (3, 18)
     assert set(result.median_parameters()) == set(model.parameter_names)
+
+
+def test_model_reproduces_seeded_mcmc_runs(model, spectrum):
+    first = model.fit_to(spectrum, n_steps=3, n_walkers=18, random_seed=42)
+    second = model.fit_to(spectrum, n_steps=3, n_walkers=18, random_seed=42)
+
+    np.testing.assert_array_equal(first.chain, second.chain)
+    np.testing.assert_array_equal(first.log_probability, second.log_probability)
 
 
 def test_model_reports_missing_salt_configuration(monkeypatch):
@@ -96,20 +144,24 @@ def test_model_reports_missing_salt_configuration(monkeypatch):
             profile_parameters=_profile_parameters(),
             initial_values=_initial_values(),
             bounds=_bounds(),
+            flow="inflow",
         )
 
 
-def test_model_rejects_unsupported_flow(tmp_path):
-    with pytest.raises(ValueError, match="Only flow='inflow'"):
-        SALTModel(
-            salt_path=str(_make_salt_installation(tmp_path / "salt")),
-            lam_ref=2382.04,
-            profile_type="emission",
-            profile_parameters=_profile_parameters(),
-            initial_values=_initial_values(),
-            bounds=_bounds(),
-            flow="outflow",  # type: ignore[arg-type]
-        )
+def test_outflow_model_requires_and_uses_doppler_parameter(tmp_path):
+    initial_values = _initial_values() | {"v_b": 10.0}
+    bounds = _bounds() | {"v_b": (0.0, 50.0)}
+    model = SALTModel(
+        salt_path=str(_make_salt_installation(tmp_path / "salt")),
+        lam_ref=2382.04,
+        profile_type="emission",
+        profile_parameters=_profile_parameters(),
+        initial_values=initial_values,
+        bounds=bounds,
+        flow="outflow",
+    )
+
+    np.testing.assert_allclose(model.compute_spectrum([-1.0, 0.0, 1.0], model.initial_parameters), [11.0, 11.0, 11.0])
 
 
 def test_model_rejects_incomplete_parameter_configuration(tmp_path):
@@ -129,6 +181,46 @@ def test_model_rejects_incomplete_parameter_configuration(tmp_path):
 
 def test_model_rejects_invalid_aperture_velocity(model, spectrum):
     parameters = model.initial_parameters
-    parameters["v_ap"] = parameters["v_w"]
+    profile_parameters = _profile_parameters()
+    profile_parameters["observing_parameters"]["v_ap"] = parameters["v_w"]
+    model = SALTModel(
+        salt_path=str(model.salt_path),
+        lam_ref=model.lam_ref,
+        profile_type=model.profile_type,
+        profile_parameters=profile_parameters,
+        initial_values=parameters,
+        bounds=model.bounds,
+        flow=model.flow,
+    )
 
     assert model.log_probability(spectrum, parameters) == -math.inf
+
+
+@pytest.mark.parametrize(
+    ("name", "value"),
+    [("alpha", -0.1), ("v_0", 600.0), ("f_c", 1.1), ("delta", 0.0)],
+)
+def test_model_rejects_invalid_physical_parameters_before_evaluation(model, spectrum, name, value):
+    parameters = model.initial_parameters
+    parameters[name] = value
+
+    assert model.log_probability(spectrum, parameters) == -math.inf
+
+
+def test_model_conditions_non_finite_salt_output(tmp_path):
+    profile_parameters = _profile_parameters()
+    profile_parameters["miscellaneous_parameters"]["return_nan"] = True
+    model = SALTModel(
+        salt_path=str(_make_salt_installation(tmp_path / "salt")),
+        lam_ref=2382.04,
+        profile_type="emission",
+        profile_parameters=profile_parameters,
+        initial_values=_initial_values(),
+        bounds=_bounds(),
+        flow="inflow",
+    )
+
+    with pytest.warns(RuntimeWarning, match="non-finite flux"):
+        flux = model.compute_spectrum([-1.0, 0.0, 1.0], model.initial_parameters)
+
+    np.testing.assert_array_equal(flux, [1.0, 1.0, 1.0])

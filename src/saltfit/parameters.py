@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from math import inf
+from math import inf, log
 from typing import Protocol
 
 
@@ -27,8 +27,8 @@ class UniformPrior:
             raise ValueError("lower must be less than upper.")
 
     def logpdf(self, value: float) -> float:
-        """Return zero within the interval and negative infinity outside it."""
-        return 0.0 if self.lower <= value <= self.upper else -inf
+        """Return the normalized log density within the interval."""
+        return -log(self.upper - self.lower) if self.lower <= value <= self.upper else -inf
 
 
 @dataclass(frozen=True, slots=True)

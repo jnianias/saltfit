@@ -18,12 +18,11 @@ class SALTConfigurationError(RuntimeError):
     """Raised when a local SALT installation cannot be used."""
 
 
-_FLOW_PARAMETER_NAMES = frozenset({"alpha", "psi", "gamma", "tau", "v_0", "v_w", "v_ap", "f_c", "k", "delta"})
-_LIBRARY_NAMES = {"Darwin": "libsalt_inflows.dylib", "Linux": "libsalt_inflows.so"}
+_LIBRARY_NAMES = {"Darwin": "libsalt.dylib", "Linux": "libsalt.so"}
 
 
 @dataclass(frozen=True, slots=True)
-class _SALTInflowEvaluator:
+class _SALTModelEvaluator:
     """Evaluate the current local SALT implementation through its Python wrapper.
 
     This is an implementation detail of :class:`saltfit.SALTModel`.
@@ -32,9 +31,10 @@ class _SALTInflowEvaluator:
     lam_ref: float
     profile_type: str
     profile_parameters: Mapping[str, object]
+    flow: str
     salt_path: Path | str | None = None
     background: float = 1.0
-    _line_profile: Callable[..., NDArray[np.float64]] = field(init=False, repr=False, compare=False)
+    _salt: Callable[..., NDArray[np.float64]] = field(init=False, repr=False, compare=False)
 
     def __post_init__(self) -> None:
         """Resolve, validate, and load the locally installed SALT wrapper."""
@@ -58,31 +58,43 @@ class _SALTInflowEvaluator:
 
         wrapper = _load_wrapper(wrapper_path)
         try:
-            line_profile = wrapper.Line_Profile
+            salt = wrapper.salt
         except AttributeError as error:
-            raise SALTConfigurationError(f"SALT wrapper does not define Line_Profile: {wrapper_path}") from error
+            raise SALTConfigurationError(f"SALT wrapper does not define salt: {wrapper_path}") from error
 
         object.__setattr__(self, "salt_path", salt_path)
-        object.__setattr__(self, "_line_profile", line_profile)
+        object.__setattr__(self, "_salt", salt)
 
     def evaluate(self, velocity: NDArray, parameters: Mapping[str, float]) -> NDArray[np.float64]:
         """Return a SALT flux profile at the supplied velocity samples."""
-        if set(parameters) != _FLOW_PARAMETER_NAMES:
-            expected = ", ".join(sorted(_FLOW_PARAMETER_NAMES))
-            raise ValueError(f"parameters must contain exactly the SALT flow parameters: {expected}.")
-
         flow_parameters = {name: float(value) for name, value in parameters.items()}
+        profile_parameters = self._profile_parameters_for_evaluation()
         return np.asarray(
-            self._line_profile(
+            self._salt(
                 v_obs=velocity,
                 lam_ref=self.lam_ref,
                 background=np.full_like(velocity, self.background, dtype=float),
                 flow_parameters=flow_parameters,
-                profile_parameters=self.profile_parameters,
+                profile_parameters=profile_parameters,
                 profile_type=self.profile_type,
+                model_type=self.flow,
             ),
             dtype=float,
         )
+
+    def _profile_parameters_for_evaluation(self) -> dict[str, object]:
+        """Return configuration without legacy duplicates of dynamic inputs."""
+        profile_parameters = dict(self.profile_parameters)
+        for section_name, legacy_key in (
+            ("observing_parameters", "v_obs"),
+            ("miscellaneous_parameters", "lam_ref"),
+        ):
+            section = profile_parameters.get(section_name)
+            if isinstance(section, Mapping):
+                section_copy = dict(section)
+                section_copy.pop(legacy_key, None)
+                profile_parameters[section_name] = section_copy
+        return profile_parameters
 
     def _resolve_salt_path(self) -> Path:
         configured_path = self.salt_path or environ.get("SALTFIT_SALT_PATH")

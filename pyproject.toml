@@ -1,6 +1,6 @@
 [project]
-name = "saltfit"
-version = "0.1.0"
+name = "SALTFit"
+version = "0.1.0a1"
 description = "An object-oriented Python API for fitting SALT models to spectra with MCMC."
 readme = "README.md"
 authors = [
@@ -9,7 +9,7 @@ authors = [
 license = "MIT"
 license-files = ["LICENSE"]
 classifiers = [
-  "Development Status :: Pre-alpha",
+  "Development Status :: 3 - Alpha",
   "Intended Audience :: Science/Research",
   "Operating System :: OS Independent",
   "Programming Language :: Python :: 3 :: Only",
@@ -23,6 +23,7 @@ requires-python = ">=3.11"
 dependencies = [
   "emcee>=3.1",
   "numpy>=2.0",
+  "tqdm>=4.66",
 ]
 
 [project.optional-dependencies]
@@ -38,8 +39,15 @@ build-backend = "uv_build"
 dev = [
     "pre-commit>=4.6.2",
     "pytest>=9.1.1",
+    "pytest-benchmark>=5.1",
     "ruff>=0.16.3",
 ]
+
+[tool.pytest.ini_options]
+markers = [
+    "integration: requires a separately built official SALT checkout",
+]
+addopts = "-m 'not integration'"
 
 [tool.ruff]
 line-length = 120
