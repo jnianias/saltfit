@@ -166,16 +166,26 @@ uv build
 
 Performance benchmarks are opt-in because they require a locally built SALT
 checkout and can vary with compiler, CPU, and OpenMP configuration. Install the
-development dependencies, set `SALTFIT_SALT_PATH`, then run:
+development dependencies, set `SALTFIT_SALT_PATH`, then run the full
+integration test file:
+
+```bash
+uv run pytest -m integration tests/test_performance.py
+```
+
+To run only the timing benchmarks:
 
 ```bash
 uv run pytest -m integration tests/test_performance.py --benchmark-only
 ```
 
-The benchmark suite measures the two hot paths used by MCMC: one SALT model
-evaluation and one complete log-probability evaluation. Run it before and after
-changes and compare the reported medians on the same machine. The normal test
-suite excludes these benchmarks and remains suitable for CI without SALT.
+The integration suite checks both inflow and outflow model evaluation, finite
+and deterministic output, parameter sensitivity, posterior evaluation, and a
+short MCMC run. The benchmark subset measures the two hot paths used by MCMC:
+one SALT model evaluation and one complete log-probability evaluation. Run it
+before and after changes and compare the reported medians on the same machine.
+The normal test suite excludes these tests and remains suitable for CI without
+SALT.
 
 To apply Ruff's formatting locally:
 
