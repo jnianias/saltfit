@@ -61,6 +61,14 @@ def _bounds() -> dict[str, tuple[float, float]]:
     }
 
 
+def _systemic_absorption_initial_values() -> dict[str, float]:
+    return _initial_values() | {"systemic_absorption_sigma": 2.0, "systemic_absorption_depth": 0.3}
+
+
+def _systemic_absorption_bounds() -> dict[str, tuple[float, float]]:
+    return _bounds() | {"systemic_absorption_sigma": (0.1, 10.0), "systemic_absorption_depth": (0.0, 1.0)}
+
+
 @pytest.fixture
 def model(tmp_path) -> SALTModel:
     return SALTModel(
@@ -82,6 +90,46 @@ def spectrum() -> Spectrum:
 def test_model_loads_local_salt_and_computes_spectrum(model):
     np.testing.assert_allclose(model.compute_spectrum([-1.0, 0.0, 1.0], model.initial_parameters), [1.2, 1.2, 1.2])
     assert model.parameter_names == tuple(_initial_values())
+
+
+def test_model_adds_fitted_systemic_gaussian_absorption(tmp_path):
+    model = SALTModel(
+        salt_path=str(_make_salt_installation(tmp_path / "salt")),
+        lam_ref=2382.04,
+        profile_type="pcygni",
+        profile_parameters=_profile_parameters(),
+        initial_values=_systemic_absorption_initial_values(),
+        bounds=_systemic_absorption_bounds(),
+        flow="inflow",
+        systemic_absorption=True,
+    )
+
+    np.testing.assert_allclose(
+        model.compute_spectrum([-2.0, 0.0, 2.0], model.initial_parameters),
+        [1.2 - 0.3 * math.exp(-0.5), 0.9, 1.2 - 0.3 * math.exp(-0.5)],
+    )
+    assert model.parameter_names[-2:] == ("systemic_absorption_sigma", "systemic_absorption_depth")
+
+
+@pytest.mark.parametrize(
+    ("name", "value"),
+    [("systemic_absorption_sigma", 0.0), ("systemic_absorption_depth", -0.1), ("systemic_absorption_depth", 1.1)],
+)
+def test_model_rejects_invalid_systemic_absorption_parameters(tmp_path, spectrum, name, value):
+    model = SALTModel(
+        salt_path=str(_make_salt_installation(tmp_path / "salt")),
+        lam_ref=2382.04,
+        profile_type="pcygni",
+        profile_parameters=_profile_parameters(),
+        initial_values=_systemic_absorption_initial_values(),
+        bounds=_systemic_absorption_bounds(),
+        flow="inflow",
+        systemic_absorption=True,
+    )
+    parameters = model.initial_parameters
+    parameters[name] = value
+
+    assert model.log_probability(spectrum, parameters) == -math.inf
 
 
 def test_model_omits_legacy_dynamic_inputs_from_wrapper_configuration(model):

@@ -45,6 +45,11 @@ _FLOW_PARAMETER_NAMES = {
     ),
 }
 
+_SYSTEMIC_ABSORPTION_PARAMETER_NAMES = (
+    "systemic_absorption_sigma",
+    "systemic_absorption_depth",
+)
+
 
 @dataclass(frozen=True, slots=True)
 class SALTModel:
@@ -88,6 +93,11 @@ class SALTModel:
     background
         Constant continuum-normalized background flux supplied to the SALT
         model. The default of one is appropriate for ``Spectrum`` objects.
+    systemic_absorption
+        Include a Gaussian absorption component centered at systemic velocity
+        (zero km/s). When enabled, ``initial_values`` and ``bounds`` must also
+        define ``systemic_absorption_sigma`` in km/s and the dimensionless
+        ``systemic_absorption_depth``.
 
     Notes
     -----
@@ -104,6 +114,7 @@ class SALTModel:
     flow: Literal["inflow", "outflow"] = "outflow"
     salt_path: str | None = None
     background: float = 1.0
+    systemic_absorption: bool = False
     _parameters: tuple[Parameter, ...] = dataclass_field(init=False, repr=False, compare=False)
     _evaluator: _SALTModelEvaluator = dataclass_field(init=False, repr=False, compare=False)
 
@@ -140,7 +151,10 @@ class SALTModel:
     @property
     def parameter_names(self) -> tuple[str, ...]:
         """Names of the free model parameters in sampler order."""
-        return _FLOW_PARAMETER_NAMES[self.flow]
+        parameter_names = _FLOW_PARAMETER_NAMES[self.flow]
+        if self.systemic_absorption:
+            return parameter_names + _SYSTEMIC_ABSORPTION_PARAMETER_NAMES
+        return parameter_names
 
     @property
     def initial_parameters(self) -> dict[str, float]:
@@ -156,7 +170,8 @@ class SALTModel:
             raise ValueError("velocity must contain only finite values.")
         self._validate_parameter_values(parameters)
 
-        flux = np.asarray(self._evaluator.evaluate(velocity_array, parameters), dtype=float)
+        salt_parameters = {name: parameters[name] for name in _FLOW_PARAMETER_NAMES[self.flow]}
+        flux = np.asarray(self._evaluator.evaluate(velocity_array, salt_parameters), dtype=float)
         if flux.shape != velocity_array.shape:
             warn(
                 "SALT returned a spectrum with an unexpected shape; using the normalized continuum instead.",
@@ -171,6 +186,10 @@ class SALTModel:
                 stacklevel=2,
             )
             return np.where(np.isfinite(flux), flux, self.background)
+        if self.systemic_absorption:
+            flux -= parameters["systemic_absorption_depth"] * np.exp(
+                -0.5 * (velocity_array / parameters["systemic_absorption_sigma"]) ** 2
+            )
         return flux
 
     def log_prior(self, parameters: Mapping[str, float]) -> float:
@@ -338,6 +357,11 @@ class SALTModel:
             return False
         if self.flow == "outflow" and parameters["v_b"] < 0.0:
             return False
+        if self.systemic_absorption:
+            if parameters["systemic_absorption_sigma"] <= 0.0:
+                return False
+            if not 0.0 <= parameters["systemic_absorption_depth"] <= 1.0:
+                return False
 
         try:
             observing = self.profile_parameters["observing_parameters"]

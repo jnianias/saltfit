@@ -156,6 +156,37 @@ both flow types use the nested `profile_parameters` layout shown above. Consult
 the [official SALT documentation](https://github.com/CodyCarr/SALT) for complete
 model-specific configuration and citation guidance.
 
+### Systemic absorption
+
+To fit absorption centered at systemic velocity alongside the SALT profile, add
+a Gaussian component by setting `systemic_absorption=True`. Add its standard
+deviation in km/s and continuum-flux depth to both fitted-parameter mappings:
+
+```python
+initial_values |= {
+    "systemic_absorption_sigma": 50.0,
+    "systemic_absorption_depth": 0.2,
+}
+bounds |= {
+    "systemic_absorption_sigma": (1.0, 300.0),
+    "systemic_absorption_depth": (0.0, 1.0),
+}
+model = SALTModel(
+    lam_ref=2382.04,
+    profile_type="pcygni",
+    profile_parameters=profile_parameters,
+    initial_values=initial_values,
+    bounds=bounds,
+    flow="outflow",
+    systemic_absorption=True,
+)
+```
+
+The component subtracts $d \exp[-v^2 / (2\sigma^2)]$ from the SALT flux,
+where $d$ is `systemic_absorption_depth` and $\sigma$ is
+`systemic_absorption_sigma`. Its centroid is fixed at $v = 0$ km/s; $\sigma$
+must be positive and $d$ is constrained to $[0, 1]$.
+
 ## Development
 
 SALTFit is developed with [uv](https://docs.astral.sh/uv/). Python 3.13 is the
