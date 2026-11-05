@@ -167,6 +167,32 @@ saved_model = saved_fit.build_model()
 convenience for loading just the runnable model, optionally from another local
 SALT checkout.
 
+### Comparing models and checking convergence
+
+`FitResult.information_criteria()` reports AIC and BIC using the highest
+likelihood among the retained samples, with the input spectrum's sample count
+and the number of fitted parameters. This is a sampled approximation to the
+maximum-likelihood estimate, not a separate optimizer. Compare models fitted to
+the same observations and likelihood definition; lower AIC/BIC is preferred.
+The criteria do not by themselves establish Bayesian evidence.
+
+```python
+criteria = saved_fit.information_criteria(saved_fit.build_model())
+print(criteria.aic, criteria.bic)
+```
+
+`FitResult.convergence_diagnostics()` estimates each parameter's integrated
+autocorrelation time. It reports whether the chain is at least 50 estimated
+autocorrelation times long and whether the estimate from the first half agrees
+with the full-chain estimate within 1%. These are practical emcee heuristics,
+not proof of convergence; also inspect trace plots and rerun important fits
+with longer chains or independent seeds. The result archive stores each
+walker's acceptance fraction as a diagnostic, not as a convergence test.
+
+`SystemicAbsorptionModel` fits a Gaussian absorption profile centered at zero
+velocity without evaluating a SALT profile. It samples only `sigma` and
+`depth`, making it suitable as a systemic-only comparison model.
+
 `SALTModel.fit_to()` uses [emcee](https://emcee.readthedocs.io/) to sample a
 normalized independent-Gaussian likelihood with the `Spectrum` uncertainties.
 The `tqdm` dependency is installed automatically, so `progress=True` can be

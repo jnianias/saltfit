@@ -12,6 +12,9 @@ subject to change.
 - Added versioned HDF5 fit archives containing the model configuration,
   original spectrum, sampler settings, and MCMC results, with `load_fit()` and
   `load_salt_model()` helpers for restoring previous fits.
+- Added a standalone fixed-centroid systemic Gaussian absorption model, AIC/BIC
+  calculation from sampled likelihood maxima, and emcee autocorrelation-time
+  diagnostics.
 - Added `Spectrum`, a validated container for continuum-normalized spectra
   sampled on a strictly increasing velocity axis.
 - Added FITS and ASCII table loading through `Spectrum.from_file()` and

@@ -4,7 +4,16 @@ from pathlib import Path
 import numpy as np
 import pytest
 
-from saltfit import FitResult, SALTConfigurationError, SALTModel, Spectrum, load_fit, load_salt_model
+from saltfit import (
+    FitResult,
+    SALTConfigurationError,
+    SALTModel,
+    Spectrum,
+    SystemicAbsorptionModel,
+    calculate_information_criteria,
+    load_fit,
+    load_salt_model,
+)
 
 
 def _make_salt_installation(root: Path) -> Path:
@@ -173,6 +182,7 @@ def test_model_fits_spectrum_with_mcmc(model, spectrum):
     assert result.log_probability.shape == (3, 18)
     assert set(result.median_parameters()) == set(model.parameter_names)
     assert result.spectrum is not None
+    assert result.acceptance_fraction.shape == (18,)
     assert result.fit_settings == {
         "n_steps": 3,
         "n_walkers": 18,
@@ -183,7 +193,13 @@ def test_model_fits_spectrum_with_mcmc(model, spectrum):
 
 
 def test_fit_archive_round_trip(tmp_path, model, spectrum):
-    result = model.fit_to(spectrum, n_steps=3, n_walkers=18, random_seed=42)
+    result = model.fit_to(
+        spectrum,
+        n_steps=3,
+        n_walkers=18,
+        random_seed=42,
+        metadata={"source": "SP8826.A2744", "line": "CII1334"},
+    )
     filepath = tmp_path / "previous-fit.h5"
 
     result.write_hdf5(filepath)
@@ -192,12 +208,14 @@ def test_fit_archive_round_trip(tmp_path, model, spectrum):
     assert loaded.parameter_names == result.parameter_names
     np.testing.assert_array_equal(loaded.chain, result.chain)
     np.testing.assert_array_equal(loaded.log_probability, result.log_probability)
+    np.testing.assert_array_equal(loaded.acceptance_fraction, result.acceptance_fraction)
     np.testing.assert_array_equal(loaded.spectrum.velocity, spectrum.velocity)
     np.testing.assert_array_equal(loaded.spectrum.flux, spectrum.flux)
     np.testing.assert_array_equal(loaded.spectrum.uncertainty, spectrum.uncertainty)
     assert loaded.model_configuration["profile_parameters"]["absorption_parameters"]["abs_waves"] == [2382.04]
     assert loaded.fit_settings == result.fit_settings
     assert loaded.metadata["saltfit_version"]
+    assert loaded.metadata["source"] == "SP8826.A2744"
 
     restored_model = loaded.build_model()
     assert restored_model.parameter_names == model.parameter_names
@@ -217,6 +235,59 @@ def test_result_without_fit_context_cannot_write_archive(tmp_path):
 
     with pytest.raises(ValueError, match="returned by SALTModel.fit_to"):
         result.write_hdf5(tmp_path / "incomplete.h5")
+
+
+def test_systemic_absorption_model_fits_and_reconstructs_without_salt(tmp_path, spectrum):
+    model = SystemicAbsorptionModel(
+        initial_values={"sigma": 1.0, "depth": 0.2},
+        bounds={"sigma": (0.1, 10.0), "depth": (0.0, 1.0)},
+    )
+    np.testing.assert_allclose(
+        model.compute_spectrum([-1.0, 0.0, 1.0], model.initial_parameters),
+        [1.0 - 0.2 * math.exp(-0.5), 0.8, 1.0 - 0.2 * math.exp(-0.5)],
+    )
+
+    result = model.fit_to(spectrum, n_steps=3, n_walkers=4, random_seed=42)
+    filepath = tmp_path / "systemic-only.h5"
+    result.write_hdf5(filepath)
+    loaded = load_fit(filepath)
+    restored_model = loaded.build_model()
+
+    assert isinstance(restored_model, SystemicAbsorptionModel)
+    np.testing.assert_array_equal(
+        restored_model.compute_spectrum(spectrum.velocity, restored_model.initial_parameters),
+        model.compute_spectrum(spectrum.velocity, model.initial_parameters),
+    )
+    assert np.isfinite(loaded.information_criteria(restored_model).aic)
+
+
+def test_information_criteria_use_standard_formulas():
+    criteria = calculate_information_criteria(log_likelihood=-10.0, n_parameters=3, n_observations=20)
+
+    assert criteria.aic == pytest.approx(26.0)
+    assert criteria.bic == pytest.approx(20.0 + 3.0 * math.log(20.0))
+
+
+def test_fit_result_calculates_information_criteria(model, spectrum):
+    result = model.fit_to(spectrum, n_steps=3, n_walkers=18, random_seed=42)
+
+    criteria = result.information_criteria(model)
+
+    assert criteria.n_parameters == len(model.parameter_names)
+    assert criteria.n_observations == spectrum.size
+    assert np.isfinite(criteria.log_likelihood)
+    assert np.isfinite(criteria.aic)
+    assert np.isfinite(criteria.bic)
+
+
+def test_fit_result_reports_emcee_convergence_diagnostics(model, spectrum):
+    result = model.fit_to(spectrum, n_steps=4, n_walkers=18, random_seed=42)
+
+    diagnostics = result.convergence_diagnostics()
+
+    assert diagnostics.parameter_names == model.parameter_names
+    assert diagnostics.autocorrelation_time.shape == (len(model.parameter_names),)
+    assert not diagnostics.converged
 
 
 def test_model_reproduces_seeded_mcmc_runs(model, spectrum):

@@ -8,7 +8,7 @@ from dataclasses import field as dataclass_field
 from datetime import datetime, timezone
 from math import inf
 from types import MappingProxyType
-from typing import Literal, Mapping
+from typing import Callable, Literal, Mapping
 from warnings import warn
 
 import emcee
@@ -50,6 +50,7 @@ _SYSTEMIC_ABSORPTION_PARAMETER_NAMES = (
     "systemic_absorption_sigma",
     "systemic_absorption_depth",
 )
+_SYSTEMIC_ONLY_PARAMETER_NAMES = ("sigma", "depth")
 
 
 @dataclass(frozen=True, slots=True)
@@ -233,6 +234,7 @@ class SALTModel:
         initial_spread: float = 1e-4,
         random_seed: int | None = None,
         progress: bool = False,
+        metadata: Mapping[str, object] | None = None,
     ) -> FitResult:
         """Sample the posterior distribution for ``spectrum`` using ``emcee``.
 
@@ -251,39 +253,17 @@ class SALTModel:
             Seed for reproducible walker initialisation.
         progress
             Show emcee's progress bar while sampling.
+        metadata
+            Optional user metadata to include in a saved fit archive.
         """
-        if n_steps < 1:
-            raise ValueError("n_steps must be positive.")
-        if initial_spread <= 0:
-            raise ValueError("initial_spread must be positive.")
-
-        n_dimensions = len(self._parameters)
-        n_walkers = n_walkers if n_walkers is not None else 2 * n_dimensions + 2
-        if n_walkers < 2 * n_dimensions:
-            raise ValueError("n_walkers must be at least twice the parameter count.")
-
-        random_generator = np.random.default_rng(random_seed)
-        initial_state = self._initial_walker_positions(n_walkers, initial_spread, random_generator)
-
-        def log_probability(parameter_values: NDArray[np.float64]) -> float:
-            parameters = dict(zip(self.parameter_names, parameter_values, strict=True))
-            return self.log_probability(spectrum, parameters)
-
-        sampler = emcee.EnsembleSampler(n_walkers, n_dimensions, log_probability)
-        if random_seed is not None:
-            sampler.random_state = np.random.RandomState(random_seed).get_state()
-        fit_started_utc = datetime.now(timezone.utc).isoformat()
-        sampler.run_mcmc(initial_state, n_steps, progress=progress)
-        return FitResult(
+        return _fit_with_emcee(
             parameter_names=self.parameter_names,
-            chain=sampler.get_chain(),
-            log_probability=sampler.get_log_prob(),
-            spectrum=Spectrum(
-                velocity=np.array(spectrum.velocity, copy=True),
-                flux=np.array(spectrum.flux, copy=True),
-                uncertainty=np.array(spectrum.uncertainty, copy=True),
-            ),
+            initial_values=self.initial_values,
+            log_prior=self.log_prior,
+            log_probability=lambda parameters: self.log_probability(spectrum, parameters),
+            spectrum=spectrum,
             model_configuration={
+                "model_type": "salt",
                 "lam_ref": self.lam_ref,
                 "profile_type": self.profile_type,
                 "profile_parameters": self.profile_parameters,
@@ -294,40 +274,13 @@ class SALTModel:
                 "background": self.background,
                 "systemic_absorption": self.systemic_absorption,
             },
-            fit_settings={
-                "n_steps": n_steps,
-                "n_walkers": n_walkers,
-                "initial_spread": initial_spread,
-                "random_seed": random_seed,
-                "progress": progress,
-            },
-            metadata={
-                "fit_started_utc": fit_started_utc,
-                "fit_completed_utc": datetime.now(timezone.utc).isoformat(),
-            },
+            n_steps=n_steps,
+            n_walkers=n_walkers,
+            initial_spread=initial_spread,
+            random_seed=random_seed,
+            progress=progress,
+            metadata=metadata,
         )
-
-    def _initial_walker_positions(
-        self,
-        n_walkers: int,
-        initial_spread: float,
-        random_generator: np.random.Generator,
-    ) -> NDArray[np.float64]:
-        initial_values = np.array([parameter.initial_value for parameter in self._parameters])
-        scales = initial_spread * np.maximum(np.abs(initial_values), 1.0)
-        positions = np.empty((n_walkers, len(self._parameters)))
-
-        for walker_index in range(n_walkers):
-            for _ in range(1_000):
-                position = initial_values + random_generator.normal(scale=scales)
-                parameters = dict(zip(self.parameter_names, position, strict=True))
-                if np.isfinite(self.log_prior(parameters)):
-                    positions[walker_index] = position
-                    break
-            else:
-                raise ValueError("could not initialise walkers within the configured parameter priors.")
-
-        return positions
 
     def _validate_parameter_values(self, parameters: Mapping[str, float]) -> None:
         expected_names = set(self.parameter_names)
@@ -398,6 +351,214 @@ class SALTModel:
             return not aperture_enabled or self._valid_aperture_velocity(observing["v_ap"], parameters["v_w"])
         except (KeyError, TypeError, ValueError):
             return False
+
+
+@dataclass(frozen=True, slots=True)
+class SystemicAbsorptionModel:
+    """Fit a systemic Gaussian absorption profile without a SALT component.
+
+    Parameters
+    ----------
+    initial_values
+        Starting values for the ``sigma`` velocity width and ``depth``.
+    bounds
+        Uniform prior bounds for ``sigma`` and ``depth``.
+    background
+        Continuum-normalized background flux.
+    center
+        Fixed Gaussian centroid in km/s. Defaults to systemic velocity.
+    """
+
+    initial_values: Mapping[str, float]
+    bounds: Mapping[str, tuple[float, float]]
+    background: float = 1.0
+    center: float = 0.0
+    _parameters: tuple[Parameter, ...] = dataclass_field(init=False, repr=False, compare=False)
+
+    def __post_init__(self) -> None:
+        """Validate Gaussian parameter priors."""
+        expected_names = set(_SYSTEMIC_ONLY_PARAMETER_NAMES)
+        if set(self.initial_values) != expected_names or set(self.bounds) != expected_names:
+            raise ValueError("initial_values and bounds must contain exactly 'sigma' and 'depth'.")
+        if not np.isfinite((self.background, self.center)).all():
+            raise ValueError("background and center must be finite.")
+
+        parameters = tuple(
+            Parameter(name, float(self.initial_values[name]), UniformPrior(*self.bounds[name]))
+            for name in _SYSTEMIC_ONLY_PARAMETER_NAMES
+        )
+        if parameters[0].initial_value <= 0:
+            raise ValueError("sigma initial value must be positive.")
+        if not 0 <= parameters[1].initial_value <= 1:
+            raise ValueError("depth initial value must lie in [0, 1].")
+        object.__setattr__(
+            self, "initial_values", {parameter.name: parameter.initial_value for parameter in parameters}
+        )
+        object.__setattr__(
+            self, "bounds", {name: tuple(map(float, self.bounds[name])) for name in _SYSTEMIC_ONLY_PARAMETER_NAMES}
+        )
+        object.__setattr__(self, "_parameters", parameters)
+
+    @property
+    def parameter_names(self) -> tuple[str, ...]:
+        """Names of the free Gaussian absorption parameters in sampler order."""
+        return _SYSTEMIC_ONLY_PARAMETER_NAMES
+
+    @property
+    def initial_parameters(self) -> dict[str, float]:
+        """Initial values keyed by parameter name."""
+        return dict(self.initial_values)
+
+    def compute_spectrum(self, velocity: ArrayLike, parameters: Mapping[str, float]) -> NDArray[np.float64]:
+        """Evaluate the fixed-centroid Gaussian absorption profile."""
+        velocity_array = np.asarray(velocity, dtype=float)
+        if velocity_array.ndim != 1 or not np.isfinite(velocity_array).all():
+            raise ValueError("velocity must be a finite one-dimensional array.")
+        self._validate_parameter_values(parameters)
+        if parameters["sigma"] <= 0 or not 0 <= parameters["depth"] <= 1:
+            raise ValueError("sigma must be positive and depth must lie in [0, 1].")
+        return self.background - parameters["depth"] * np.exp(
+            -0.5 * ((velocity_array - self.center) / parameters["sigma"]) ** 2
+        )
+
+    def log_prior(self, parameters: Mapping[str, float]) -> float:
+        """Return the total log prior density, or negative infinity if invalid."""
+        try:
+            self._validate_parameter_values(parameters)
+        except ValueError:
+            return -inf
+        if parameters["sigma"] <= 0 or not 0 <= parameters["depth"] <= 1:
+            return -inf
+        return float(sum(parameter.prior.logpdf(float(parameters[parameter.name])) for parameter in self._parameters))
+
+    def log_likelihood(self, spectrum: Spectrum, parameters: Mapping[str, float]) -> float:
+        """Return the normalized independent-Gaussian log likelihood."""
+        predicted_flux = self.compute_spectrum(spectrum.velocity, parameters)
+        residual = spectrum.flux - predicted_flux
+        variance = spectrum.uncertainty**2
+        return float(-0.5 * np.sum(residual**2 / variance + np.log(2.0 * np.pi * variance)))
+
+    def log_probability(self, spectrum: Spectrum, parameters: Mapping[str, float]) -> float:
+        """Return the log posterior probability for ``parameters`` and ``spectrum``."""
+        log_prior = self.log_prior(parameters)
+        if not np.isfinite(log_prior):
+            return -inf
+        return log_prior + self.log_likelihood(spectrum, parameters)
+
+    def fit_to(
+        self,
+        spectrum: Spectrum,
+        *,
+        n_steps: int,
+        n_walkers: int | None = None,
+        initial_spread: float = 1e-4,
+        random_seed: int | None = None,
+        progress: bool = False,
+        metadata: Mapping[str, object] | None = None,
+    ) -> FitResult:
+        """Sample the Gaussian-only posterior using ``emcee``."""
+        return _fit_with_emcee(
+            parameter_names=self.parameter_names,
+            initial_values=self.initial_values,
+            log_prior=self.log_prior,
+            log_probability=lambda parameters: self.log_probability(spectrum, parameters),
+            spectrum=spectrum,
+            model_configuration={
+                "model_type": "systemic_absorption",
+                "initial_values": self.initial_values,
+                "bounds": self.bounds,
+                "background": self.background,
+                "center": self.center,
+            },
+            n_steps=n_steps,
+            n_walkers=n_walkers,
+            initial_spread=initial_spread,
+            random_seed=random_seed,
+            progress=progress,
+            metadata=metadata,
+        )
+
+    def _validate_parameter_values(self, parameters: Mapping[str, float]) -> None:
+        if set(parameters) != set(self.parameter_names):
+            raise ValueError("parameters must contain exactly the model parameter names.")
+        if not all(np.isfinite(float(value)) for value in parameters.values()):
+            raise ValueError("parameter values must be finite.")
+
+
+def _fit_with_emcee(
+    *,
+    parameter_names: tuple[str, ...],
+    initial_values: Mapping[str, float],
+    log_prior: Callable[[Mapping[str, float]], float],
+    log_probability: Callable[[Mapping[str, float]], float],
+    spectrum: Spectrum,
+    model_configuration: Mapping[str, object],
+    n_steps: int,
+    n_walkers: int | None,
+    initial_spread: float,
+    random_seed: int | None,
+    progress: bool,
+    metadata: Mapping[str, object] | None,
+) -> FitResult:
+    """Run emcee and capture the fit context shared by supported model types."""
+    if n_steps < 1:
+        raise ValueError("n_steps must be positive.")
+    if initial_spread <= 0:
+        raise ValueError("initial_spread must be positive.")
+
+    n_dimensions = len(parameter_names)
+    n_walkers = n_walkers if n_walkers is not None else 2 * n_dimensions + 2
+    if n_walkers < 2 * n_dimensions:
+        raise ValueError("n_walkers must be at least twice the parameter count.")
+
+    random_generator = np.random.default_rng(random_seed)
+    initial_vector = np.array([initial_values[name] for name in parameter_names], dtype=float)
+    scales = initial_spread * np.maximum(np.abs(initial_vector), 1.0)
+    initial_state = np.empty((n_walkers, n_dimensions))
+    for walker_index in range(n_walkers):
+        for _ in range(1_000):
+            position = initial_vector + random_generator.normal(scale=scales)
+            parameters = dict(zip(parameter_names, position, strict=True))
+            if np.isfinite(log_prior(parameters)):
+                initial_state[walker_index] = position
+                break
+        else:
+            raise ValueError("could not initialise walkers within the configured parameter priors.")
+
+    def sampler_log_probability(parameter_values: NDArray[np.float64]) -> float:
+        parameters = dict(zip(parameter_names, parameter_values, strict=True))
+        return log_probability(parameters)
+
+    sampler = emcee.EnsembleSampler(n_walkers, n_dimensions, sampler_log_probability)
+    if random_seed is not None:
+        sampler.random_state = np.random.RandomState(random_seed).get_state()
+    fit_started_utc = datetime.now(timezone.utc).isoformat()
+    sampler.run_mcmc(initial_state, n_steps, progress=progress)
+    fit_metadata = dict(metadata or {})
+    fit_metadata.update({
+        "fit_started_utc": fit_started_utc,
+        "fit_completed_utc": datetime.now(timezone.utc).isoformat(),
+    })
+    return FitResult(
+        parameter_names=parameter_names,
+        chain=sampler.get_chain(),
+        log_probability=sampler.get_log_prob(),
+        spectrum=Spectrum(
+            velocity=np.array(spectrum.velocity, copy=True),
+            flux=np.array(spectrum.flux, copy=True),
+            uncertainty=np.array(spectrum.uncertainty, copy=True),
+        ),
+        model_configuration=model_configuration,
+        fit_settings={
+            "n_steps": n_steps,
+            "n_walkers": n_walkers,
+            "initial_spread": initial_spread,
+            "random_seed": random_seed,
+            "progress": progress,
+        },
+        metadata=fit_metadata,
+        acceptance_fraction=sampler.acceptance_fraction,
+    )
 
 
 def _freeze_mapping(mapping: Mapping[str, object]) -> Mapping[str, object]:

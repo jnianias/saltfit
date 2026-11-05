@@ -12,7 +12,7 @@ from saltfit.result import _ARCHIVE_FORMAT, _ARCHIVE_SCHEMA_VERSION, FitResult
 from saltfit.spectrum import Spectrum
 
 if TYPE_CHECKING:
-    from saltfit.model import SALTModel
+    from saltfit.model import SALTModel, SystemicAbsorptionModel
 
 
 def load_fit(filepath: Path | str) -> FitResult:
@@ -37,6 +37,9 @@ def load_fit(filepath: Path | str) -> FitResult:
             )
             chain = archive["fit/chain"][...]
             log_probability = archive["fit/log_probability"][...]
+            acceptance_fraction = (
+                archive["fit/acceptance_fraction"][...] if "acceptance_fraction" in archive["fit"] else None
+            )
             metadata = {name: _decode_attribute(value) for name, value in archive["metadata"].attrs.items()}
         except KeyError as error:
             raise ValueError(f"SALTFit archive is missing required content: {error}.") from error
@@ -51,11 +54,16 @@ def load_fit(filepath: Path | str) -> FitResult:
         model_configuration=model_configuration,
         fit_settings=fit_settings,
         metadata=metadata,
+        acceptance_fraction=acceptance_fraction,
     )
 
 
-def load_salt_model(filepath: Path | str, *, salt_path: str | Path | None = None) -> SALTModel:
-    """Recreate the SALT model configuration stored in a fit archive."""
+def load_salt_model(
+    filepath: Path | str,
+    *,
+    salt_path: str | Path | None = None,
+) -> SALTModel | SystemicAbsorptionModel:
+    """Recreate the model configuration stored in a fit archive."""
     return load_fit(filepath).build_model(salt_path=salt_path)
 
 
