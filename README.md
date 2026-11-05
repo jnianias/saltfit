@@ -143,6 +143,30 @@ result = model.fit_to(spectrum, n_steps=1_000, n_walkers=24)
 best_fit = result.median_parameters()
 ```
 
+Save the complete fit archive—including the model configuration, the exact
+spectrum used, and the MCMC result—to one HDF5 file by passing the output
+filepath:
+
+```python
+result.write_hdf5("results/my-fit.h5")
+```
+
+Load the saved fit later to inspect the result and input spectrum without
+loading SALT. Recreate a runnable model from its saved configuration with
+`load_salt_model`; pass `salt_path` to use a different local SALT checkout.
+
+```python
+from saltfit import load_fit, load_salt_model
+
+saved_fit = load_fit("results/my-fit.h5")
+saved_spectrum = saved_fit.spectrum
+saved_model = saved_fit.build_model()
+```
+
+`load_salt_model("results/my-fit.h5", salt_path="/path/to/SALT")` is a
+convenience for loading just the runnable model, optionally from another local
+SALT checkout.
+
 `SALTModel.fit_to()` uses [emcee](https://emcee.readthedocs.io/) to sample a
 normalized independent-Gaussian likelihood with the `Spectrum` uncertainties.
 The `tqdm` dependency is installed automatically, so `progress=True` can be

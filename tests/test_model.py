@@ -4,7 +4,7 @@ from pathlib import Path
 import numpy as np
 import pytest
 
-from saltfit import SALTConfigurationError, SALTModel, Spectrum
+from saltfit import FitResult, SALTConfigurationError, SALTModel, Spectrum, load_fit, load_salt_model
 
 
 def _make_salt_installation(root: Path) -> Path:
@@ -172,6 +172,51 @@ def test_model_fits_spectrum_with_mcmc(model, spectrum):
     assert result.chain.shape == (3, 18, 9)
     assert result.log_probability.shape == (3, 18)
     assert set(result.median_parameters()) == set(model.parameter_names)
+    assert result.spectrum is not None
+    assert result.fit_settings == {
+        "n_steps": 3,
+        "n_walkers": 18,
+        "initial_spread": 1e-4,
+        "random_seed": 42,
+        "progress": False,
+    }
+
+
+def test_fit_archive_round_trip(tmp_path, model, spectrum):
+    result = model.fit_to(spectrum, n_steps=3, n_walkers=18, random_seed=42)
+    filepath = tmp_path / "previous-fit.h5"
+
+    result.write_hdf5(filepath)
+    loaded = load_fit(filepath)
+
+    assert loaded.parameter_names == result.parameter_names
+    np.testing.assert_array_equal(loaded.chain, result.chain)
+    np.testing.assert_array_equal(loaded.log_probability, result.log_probability)
+    np.testing.assert_array_equal(loaded.spectrum.velocity, spectrum.velocity)
+    np.testing.assert_array_equal(loaded.spectrum.flux, spectrum.flux)
+    np.testing.assert_array_equal(loaded.spectrum.uncertainty, spectrum.uncertainty)
+    assert loaded.model_configuration["profile_parameters"]["absorption_parameters"]["abs_waves"] == [2382.04]
+    assert loaded.fit_settings == result.fit_settings
+    assert loaded.metadata["saltfit_version"]
+
+    restored_model = loaded.build_model()
+    assert restored_model.parameter_names == model.parameter_names
+    np.testing.assert_array_equal(
+        restored_model.compute_spectrum(spectrum.velocity, restored_model.initial_parameters),
+        model.compute_spectrum(spectrum.velocity, model.initial_parameters),
+    )
+    assert load_salt_model(filepath).parameter_names == model.parameter_names
+
+
+def test_result_without_fit_context_cannot_write_archive(tmp_path):
+    result = FitResult(
+        parameter_names=("x",),
+        chain=np.zeros((1, 1, 1)),
+        log_probability=np.zeros((1, 1)),
+    )
+
+    with pytest.raises(ValueError, match="returned by SALTModel.fit_to"):
+        result.write_hdf5(tmp_path / "incomplete.h5")
 
 
 def test_model_reproduces_seeded_mcmc_runs(model, spectrum):

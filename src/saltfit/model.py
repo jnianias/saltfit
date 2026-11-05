@@ -5,6 +5,7 @@ from __future__ import annotations
 from copy import deepcopy
 from dataclasses import dataclass
 from dataclasses import field as dataclass_field
+from datetime import datetime, timezone
 from math import inf
 from types import MappingProxyType
 from typing import Literal, Mapping
@@ -271,11 +272,39 @@ class SALTModel:
         sampler = emcee.EnsembleSampler(n_walkers, n_dimensions, log_probability)
         if random_seed is not None:
             sampler.random_state = np.random.RandomState(random_seed).get_state()
+        fit_started_utc = datetime.now(timezone.utc).isoformat()
         sampler.run_mcmc(initial_state, n_steps, progress=progress)
         return FitResult(
             parameter_names=self.parameter_names,
             chain=sampler.get_chain(),
             log_probability=sampler.get_log_prob(),
+            spectrum=Spectrum(
+                velocity=np.array(spectrum.velocity, copy=True),
+                flux=np.array(spectrum.flux, copy=True),
+                uncertainty=np.array(spectrum.uncertainty, copy=True),
+            ),
+            model_configuration={
+                "lam_ref": self.lam_ref,
+                "profile_type": self.profile_type,
+                "profile_parameters": self.profile_parameters,
+                "initial_values": self.initial_values,
+                "bounds": self.bounds,
+                "flow": self.flow,
+                "salt_path": str(self._evaluator.salt_path),
+                "background": self.background,
+                "systemic_absorption": self.systemic_absorption,
+            },
+            fit_settings={
+                "n_steps": n_steps,
+                "n_walkers": n_walkers,
+                "initial_spread": initial_spread,
+                "random_seed": random_seed,
+                "progress": progress,
+            },
+            metadata={
+                "fit_started_utc": fit_started_utc,
+                "fit_completed_utc": datetime.now(timezone.utc).isoformat(),
+            },
         )
 
     def _initial_walker_positions(
